@@ -1,51 +1,181 @@
-Microsoft Windows [Version 10.0.26300.9711]
-(c) Microsoft Corporation. All rights reserved.
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YMO-Style FSK Modem Receiver</title>
+    <style>
+        body {
+            background-color: #121212;
+            color: #ff0055;
+            font-family: 'Courier New', Courier, monospace;
+            text-align: center;
+            padding: 40px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            border: 2px dashed #ff0055;
+            padding: 30px;
+            border-radius: 10px;
+            background-color: #1e1e1e;
+        }
+        button {
+            background-color: #ff0055;
+            color: #121212;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 5px;
+            margin-top: 15px;
+        }
+        button:hover {
+            background-color: #ff3377;
+        }
+        #status {
+            margin-top: 20px;
+            font-size: 14px;
+            color: #00ffcc;
+        }
+        select {
+            margin-top: 15px;
+            padding: 8px;
+            background: #222;
+            color: #00ffcc;
+            border: 1px solid #ff0055;
+            font-family: 'Courier New', Courier, monospace;
+        }
+    </style>
+</head>
+<body>
 
-C:\Windows\System32>pip install numpy sounddevice python-rtmidi scipy
-Requirement already satisfied: numpy in C:\Users\USER\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages (2.5.2)
-Requirement already satisfied: sounddevice in C:\Users\USER\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages (0.5.6)
-Collecting python-rtmidi
-  Using cached python_rtmidi-1.5.8.tar.gz (368 kB)
-  Installing build dependencies ... done
-  Getting requirements to build wheel ... done
-  Preparing metadata (pyproject.toml) ... error
-  error: subprocess-exited-with-error
+    <div class="container">
+        <h1>YMO FSK DECODER / RECEIVER</h1>
+        <p>CDのモデム音をマイクやライン入力で聴き取り、DAWへMIDI出力！</p>
+        
+        <div>
+            <label>出力先MIDIポート: </label><br>
+            <select id="midiOutputSelect"><option value="">MIDI出力デバイスをスキャン中...</option></select>
+        </div><br>
 
-  × Preparing metadata (pyproject.toml) did not run successfully.
-  │ exit code: 1
-  ╰─> [20 lines of output]
-      + meson setup C:\Users\USER\AppData\Local\Temp\pip-install-j3zswiax\python-rtmidi_2bb3cf019e7c4616b4a5757a5b0fb38f C:\Users\USER\AppData\Local\Temp\pip-install-j3zswiax\python-rtmidi_2bb3cf019e7c4616b4a5757a5b0fb38f\.mesonpy-fr0n1lva -Dbuildtype=release -Db_ndebug=if-release -Db_vscrt=md -Dwheel=true -Dverbose=false -Dbuildtype=plain --native-file=C:\Users\USER\AppData\Local\Temp\pip-install-j3zswiax\python-rtmidi_2bb3cf019e7c4616b4a5757a5b0fb38f\.mesonpy-fr0n1lva\meson-python-native-file.ini
-      The Meson build system
-      Version: 1.12.1
-      Source dir: C:\Users\USER\AppData\Local\Temp\pip-install-j3zswiax\python-rtmidi_2bb3cf019e7c4616b4a5757a5b0fb38f
-      Build dir: C:\Users\USER\AppData\Local\Temp\pip-install-j3zswiax\python-rtmidi_2bb3cf019e7c4616b4a5757a5b0fb38f\.mesonpy-fr0n1lva
-      Build type: native build
-      WARNING: Failed to activate VS environment: Could not find C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe
-      Project name: python-rtmidi
-      Project version: 1.5.8
+        <button id="startBtn">受信・デコード開始</button>
+        
+        <div id="status">「受信開始」を押してマイク（ライン入力）を有効にしてね</div>
+    </div>
 
-      ..\meson.build:1:0: ERROR: Unknown compiler(s): [['icl'], ['cl'], ['c++'], ['g++'], ['clang++'], ['clang-cl']]
-      The following exception(s) were encountered:
-      Running `icl ""` gave "[WinError 2] 指定されたファイルが見つかりません。"
-      Running `cl /?` gave "[WinError 2] 指定されたファイルが見つかりません。"
-      Running `c++ --version` gave "[WinError 2] 指定されたファイルが見つかりません。"
-      Running `g++ --version` gave "[WinError 2] 指定されたファイルが見つかりません。"
-      Running `clang++ --version` gave "[WinError 2] 指定されたファイルが見つかりません。"
-      Running `clang-cl /?` gave "[WinError 2] 指定されたファイルが見つかりません。"
+    <script>
+        const startBtn = document.getElementById('startBtn');
+        const statusDiv = document.getElementById('status');
+        const midiOutputSelect = document.getElementById('midiOutputSelect');
 
-      A full log can be found at C:\Users\USER\AppData\Local\Temp\pip-install-j3zswiax\python-rtmidi_2bb3cf019e7c4616b4a5757a5b0fb38f\.mesonpy-fr0n1lva\meson-logs\meson-log.txt
-      [end of output]
+        let midiAccess = null;
+        let audioContext = null;
+        let analyser = null;
+        let microphone = null;
+        let isReceiving = false;
 
-  note: This error originates from a subprocess, and is likely not a problem with pip.
+        // Web MIDI APIの初期化
+        if (navigator.requestMIDIAccess) {
+            navigator.requestMIDIAccess().then(access => {
+                midiAccess = access;
+                updateMidiOutputs();
+                midiAccess.onstatechange = updateMidiOutputs;
+            }, err => {
+                statusDiv.innerText = "エラー: Web MIDI APIが使えない環境みたい。";
+                console.error(err);
+            });
+        } else {
+            statusDiv.innerText = "このブラウザはWeb MIDI APIに対応してないよ。";
+        }
 
-[notice] A new release of pip is available: 26.2 -> 26.2.2
-[notice] To update, run: C:\Users\USER\AppData\Local\Python\pythoncore-3.14-64\python.exe -m pip install --upgrade pip
-error: metadata-generation-failed
+        function updateMidiOutputs() {
+            midiOutputSelect.innerHTML = "";
+            const outputs = midiAccess.outputs.values();
+            let count = 0;
+            for (let output of outputs) {
+                const option = document.createElement('option');
+                option.value = output.id;
+                option.text = output.name;
+                midiOutputSelect.appendChild(option);
+                count++;
+            }
+            if (count === 0) {
+                const option = document.createElement('option');
+                option.text = "MIDI出力が見つからないよ (要仮想MIDIドライバ)";
+                midiOutputSelect.appendChild(option);
+            }
+        }
 
-× Encountered error while generating package metadata.
-╰─> python-rtmidi
+        startBtn.addEventListener('click', async () => {
+            if (isReceiving) return;
 
-note: This is an issue with the package mentioned above, not pip.
-hint: See above for details.
+            try {
+                // マイク・ライン入力の取得
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                microphone = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 2048;
 
-C:\Windows\System32>
+                microphone.connect(analyser);
+
+                isReceiving = true;
+                startBtn.innerText = "受信・解析中...";
+                startBtn.style.backgroundColor = "#00ffcc";
+                startBtn.style.color = "#121212";
+                statusDiv.innerText = "音声入力を監視中……CDを再生してモデム音を聴かせてね！";
+
+                // リアルタイム周波数解析ループ
+                detectModemSignal();
+
+            } catch (err) {
+                statusDiv.innerText = "エラー: マイクの使用が許可されなかったよ。";
+                console.error(err);
+            }
+        });
+
+        function detectModemSignal() {
+            if (!isReceiving) return;
+
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            analyser.getByteFrequencyData(dataArray);
+
+            // スペクトルから一番強い周波数（ピーク）を探す簡易ロジック
+            let maxIndex = 0;
+            let maxValue = 0;
+            for (let i = 0; i < bufferLength; i++) {
+                if (dataArray[i] > maxValue) {
+                    maxValue = dataArray[i];
+                    maxIndex = i;
+                }
+            }
+
+            const nyquist = audioContext.sampleRate / 2;
+            const peakFreq = (maxIndex / bufferLength) * nyquist;
+
+            // 音量が一定以上ある場合のみ判定
+            if (maxValue > 150) {
+                // 1200Hz付近ならbit 0、2400Hz付近ならbit 1としてキャッチ
+                if (Math.abs(peakFreq - 1200) < 200) {
+                    statusDiv.innerText = `[受信中] 信号検知: 1200Hz (bit 0) - ピー音`;
+                    sendMidiNote(60, 100); // テスト用ノートオン
+                } else if (Math.abs(peakFreq - 2400) < 300) {
+                    statusDiv.innerText = `[受信中] 信号検知: 2400Hz (bit 1) - ギャー音`;
+                    sendMidiNote(62, 100); // テスト用ノートオン
+                }
+            }
+
+            requestAnimationFrame(detectModemSignal);
+        }
+
+        function sendMidiNote(noteNumber, velocity) {
+            const selectedId = midiOutputSelect.value;
+            if (!selectedId || !midiAccess) return;
+
+            const output = midiAccess.outputs.get(selectedId);
+            if (output) {
+                // Note On
