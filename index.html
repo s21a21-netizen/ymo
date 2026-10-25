@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YMO-Style MIDI to FSK Audio Converter</title>
+    <!-- @tonejs/midi をCDNから読み込み -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script src="https://unpkg.com/@tonejs/midi"></script>
+    <style>
+        body {
+            background-color: #121212;
+            color: #00ffcc;
+            font-family: 'Courier New', Courier, monospace;
+            text-align: center;
+            padding: 40px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            border: 2px dashed #00ffcc;
+            padding: 30px;
+            border-radius: 10px;
+            background-color: #1e1e1e;
+        }
+        input[type="file"] {
+            margin: 20px 0;
+            color: #fff;
+        }
+        button {
+            background-color: #00ffcc;
+            color: #121212;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+        button:hover {
+            background-color: #00cca3;
+        }
+        #status {
+            margin-top: 20px;
+            font-size: 14px;
+            color: #ff0055;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>YMO-STYLE SYNC CONVERTER</h1>
+        <p>MIDIファイルをドロップして、あの「ピーギャー音（同期用オーディオ）」に変換せよ！</p>
+        
+        <input type="file" id="midiFileInput" accept=".mid, .midi"><br>
+        <button id="convertBtn" disabled>ピーギャー音に変換してWAV出力</button>
+        
+        <div id="status">MIDIファイルを選んでね</div>
+        <audio id="audioPreview" controls style="margin-top:20px; width:100%; display:none;"></audio>
+    </div>
+
+    <script>
+        const midiFileInput = document.getElementById('midiFileInput');
+        const convertBtn = document.getElementById('convertBtn');
+        const statusDiv = document.getElementById('status');
+        const audioPreview = document.getElementById('audioPreview');
+
+        let parsedMidi = null;
+
+        midiFileInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            statusDiv.innerText = "MIDIファイルを読み込んでいます...";
+            const arrayBuffer = await file.arrayBuffer();
+            
+            try {
+                parsedMidi = new Midi(arrayBuffer);
+                statusDiv.innerText = `読み込み成功: ${file.name} (トラック数: ${parsedMidi.tracks.length})`;
+                convertBtn.disabled = false;
+            } catch (err) {
+                statusDiv.innerText = "エラー: 正しいMIDIファイルじゃないみたい！";
+                console.error(err);
+            }
+        });
+
+        convertBtn.addEventListener('click', async () => {
+            if (!parsedMidi) return;
+
+            statusDiv.innerText = "オフラインオーディオレンダリング中（ピーギャー音生成）...";
+            convertBtn.disabled = true;
+
+            // 曲の総デュースを取得
+            const duration = parsedMidi.duration + 2; // 余白2秒
+
+            // OfflineAudioContextを使ってブラウザ内で高速にWAVをレンダリング
+            const offlineCtx = new OfflineAudioContext(1, 44100 * duration, 44100);
+
+            // トラッキング処理：ノートに応じて周波数を変える（ピーギャー音の合成）
+            parsedMidi.tracks.forEach(track => {
+                track.notes.forEach(note => {
+                    // ノート番号を周波数(Hz)に変換
+                    const freq = 440 * Math.pow(2, (note.midi - 69) / 12);
+                    
+                    const osc = offlineCtx.createOscillator();
+                    const gain = offlineCtx.createGain();
+
+                    // YMOっぽい「矩形波」または「のこぎり波」でピーギャー感が出せる
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(freq, note.time);
+
+                    // エンベロープ（音の立ち上がりと消え方）
+                    gain.gain.setValueAtTime(0, note.time);
+                    gain.gain.linearRampToValueAtTime(0.3, note.time + 0.01);
+                    gain.gain.setValueAtTime(0.3, note.time + note.duration - 0.01);
+                    gain.gain.linearRampToValueAtTime(0, note.time + note.duration);
+
+                    osc.connect(gain);
+                    gain.connect(offlineCtx.destination);
+
+                    osc.start(note.time);
+                    osc.stop(note.time + note.duration);
+                });
+            });
+
+            // レンダリング実行
+            const renderedBuffer = await offlineCtx.startRendering();
+            
+            // WAVのBlob（ファイルデータ）に変換
+            const wavBlob = bufferToWave(renderedBuffer, renderedBuffer.length);
